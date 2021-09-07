@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package rados
@@ -6,12 +7,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/ceph/go-ceph/rados"
-	datastore "github.com/ipfs/go-datastore"
-	dsq "github.com/ipfs/go-datastore/query"
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/ceph/go-ceph/rados"
+	datastore "github.com/ipfs/go-datastore"
+	dsq "github.com/ipfs/go-datastore/query"
 )
 
 type Datastore struct {
@@ -129,7 +131,7 @@ func (ds *Datastore) Query(q dsq.Query) (dsq.Results, error) {
 			} else {
 				v, err := ds.Get(datastore.NewKey(iter.Value()))
 				if err != nil {
-					fmt.Errorf("Failed to fetch value for key '%s'", iter.Value())
+					err = fmt.Errorf("Failed to fetch value for key '%s': %w", iter.Value(), err)
 					return
 				}
 				reschan <- dsq.Result{Entry: dsq.Entry{Key: iter.Value(), Value: v}}
@@ -195,6 +197,10 @@ func (ds *Datastore) GetSize(key datastore.Key) (size int, err error) {
 	}
 	return
 
+}
+
+func (ds *Datastore) Sync(prefix datastore.Key) (err error) {
+	return nil
 }
 
 func (ds *Datastore) Batch() (datastore.Batch, error) {
