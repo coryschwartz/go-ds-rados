@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package rados
@@ -5,10 +6,11 @@ package rados
 import (
 	"bytes"
 	"fmt"
-	datastore "github.com/ipfs/go-datastore"
-	dsq "github.com/ipfs/go-datastore/query"
 	"os"
 	"testing"
+
+	datastore "github.com/ipfs/go-datastore"
+	dsq "github.com/ipfs/go-datastore/query"
 )
 
 func TestPutGetBytes(t *testing.T) {
@@ -133,7 +135,7 @@ func addTestCases(t *testing.T, ds *Datastore, testcases map[string]string) {
 }
 
 func removeTestCases(t *testing.T, ds *Datastore, testcases map[string]string) {
-	for k, _ := range testcases {
+	for k := range testcases {
 		dsk := datastore.NewKey(k)
 		if err := ds.Delete(dsk); err != nil {
 			t.Fatal(err)
@@ -230,7 +232,7 @@ func TestGetSize(t *testing.T) {
 func newOrAbort(t *testing.T) (*Datastore, error) {
 	confPath := os.Getenv("CEPH_CONF")
 	pool := os.Getenv("CEPH_POOL")
-	ds, err := NewDatastore(confPath, pool)
+	ds, err := NewDatastoreWithConfig(pool, "", confPath)
 	if err != nil {
 		t.Log("could not connect to a redis instance")
 		t.SkipNow()

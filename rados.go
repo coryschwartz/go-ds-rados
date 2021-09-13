@@ -5,11 +5,8 @@ package rados
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-	"os"
 	"strings"
-	"sync"
 
 	"github.com/ceph/go-ceph/rados"
 	datastore "github.com/ipfs/go-datastore"
@@ -17,29 +14,48 @@ import (
 )
 
 type Datastore struct {
-	mu       sync.Mutex
-	conn     *rados.Conn
-	confPath string
-	pool     string
+	conn  *rados.Conn
+	ioctx *rados.IOContext
 }
 
-func NewDatastore(confPath string, pool string) (*Datastore, error) {
+func NewDatastore(pool string, namespace string) (*Datastore, error) {
 	var err error
-	ds := &Datastore{confPath: confPath, pool: pool}
+	ds := &Datastore{}
 	ds.conn, err = rados.NewConn()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create ceph connection: %w", err)
 	}
+	err = ds.conn.ReadDefaultConfigFile()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read default ceph config file: %w", err)
+	}
+	return setupRados(ds, pool, namespace)
+}
 
+func NewDatastoreWithConfig(pool string, namespace string, confPath string) (*Datastore, error) {
+	var err error
+	ds := &Datastore{}
+	ds.conn, err = rados.NewConn()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ceph connection: %w", err)
+	}
 	err = ds.conn.ReadConfigFile(confPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed read ceph config file: %w", err)
 	}
-	err = ds.conn.Connect()
+	return setupRados(ds, pool, namespace)
+}
+
+func setupRados(ds *Datastore, pool string, namespace string) (*Datastore, error) {
+	err := ds.conn.Connect()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to rados\n")
-		return nil, err
+		return nil, fmt.Errorf("failed to connect to ceph: %w", err)
 	}
+	ds.ioctx, err = ds.conn.OpenIOContext(pool)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open ceph io context: %w", err)
+	}
+	ds.ioctx.SetNamespace(namespace)
 	return ds, nil
 }
 
@@ -48,32 +64,16 @@ func (ds *Datastore) Shutdown() {
 }
 
 func (ds *Datastore) Put(key datastore.Key, value []byte) error {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	ioctx, err := ds.conn.OpenIOContext(ds.pool)
-	if err != nil {
-		return err
-	}
-	defer ioctx.Destroy()
-	err = ioctx.Write(key.String(), value, 0)
-	return err
+	return ds.ioctx.WriteFull(key.String(), value)
 }
 
 func (ds *Datastore) Get(key datastore.Key) (value []byte, err error) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	var ioctx *rados.IOContext
-	ioctx, err = ds.conn.OpenIOContext(ds.pool)
-	if err != nil {
-		return
-	}
-	defer ioctx.Destroy()
 	var result bytes.Buffer
 	var buf []byte = make([]byte, 1024)
 	var offset uint64
 	for {
 		var count int
-		count, err = ioctx.Read(key.String(), buf, offset)
+		count, err = ds.ioctx.Read(key.String(), buf, offset)
 		if err != nil {
 			if err == rados.RadosErrorNotFound {
 				err = datastore.ErrNotFound
@@ -93,33 +93,17 @@ func (ds *Datastore) Get(key datastore.Key) (value []byte, err error) {
 }
 
 func (ds *Datastore) Delete(key datastore.Key) error {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	ioctx, err := ds.conn.OpenIOContext(ds.pool)
-	if err != nil {
-		return err
-	}
-	defer ioctx.Destroy()
-	err = ioctx.Delete(key.String())
-	return err
+	return ds.ioctx.Delete(key.String())
 }
 
 func (ds *Datastore) Query(q dsq.Query) (dsq.Results, error) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	ioctx, err := ds.conn.OpenIOContext(ds.pool)
-	if err != nil {
-		return nil, err
-	}
-
 	reschan := make(chan dsq.Result, dsq.KeysOnlyBufSize)
 	go func() {
 		defer close(reschan)
-		defer ioctx.Destroy()
-		iter, err := ioctx.Iter()
+		iter, err := ds.ioctx.Iter()
 		defer iter.Close()
 		if err != nil {
-			reschan <- dsq.Result{Error: errors.New("Failed to fetch rados iterator")}
+			reschan <- dsq.Result{Error: fmt.Errorf("failed to fetch rados iterator: %w", err)}
 			return
 		}
 		for iter.Next() {
@@ -131,7 +115,7 @@ func (ds *Datastore) Query(q dsq.Query) (dsq.Results, error) {
 			} else {
 				v, err := ds.Get(datastore.NewKey(iter.Value()))
 				if err != nil {
-					err = fmt.Errorf("Failed to fetch value for key '%s': %w", iter.Value(), err)
+					err = fmt.Errorf("failed to fetch value for key '%s': %w", iter.Value(), err)
 					return
 				}
 				reschan <- dsq.Result{Entry: dsq.Entry{Key: iter.Value(), Value: v}}
@@ -154,14 +138,7 @@ func (ds *Datastore) Query(q dsq.Query) (dsq.Results, error) {
 }
 
 func (ds *Datastore) Has(key datastore.Key) (exists bool, err error) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	ioctx, err := ds.conn.OpenIOContext(ds.pool)
-	if err != nil {
-		return
-	}
-	defer ioctx.Destroy()
-	_, err = ioctx.Stat(key.String())
+	_, err = ds.ioctx.Stat(key.String())
 	if err != nil {
 		if err == rados.RadosErrorNotFound {
 			err = nil
@@ -175,16 +152,8 @@ func (ds *Datastore) Has(key datastore.Key) (exists bool, err error) {
 }
 
 func (ds *Datastore) GetSize(key datastore.Key) (size int, err error) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-	ioctx, err := ds.conn.OpenIOContext(ds.pool)
-	if err != nil {
-		size = -1
-		return
-	}
-	defer ioctx.Destroy()
 	var stat rados.ObjectStat
-	stat, err = ioctx.Stat(key.String())
+	stat, err = ds.ioctx.Stat(key.String())
 	if err != nil {
 		size = -1
 		if err == rados.RadosErrorNotFound {
