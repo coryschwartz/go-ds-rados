@@ -1,4 +1,4 @@
-module github.com/ipbit/go-ds-rados
+module github.com/coryschwartz/go-ds-rados
 
 go 1.17
 
