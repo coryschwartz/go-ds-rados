@@ -31,7 +31,11 @@ func NewDatastore(confPath string, pool string) (*Datastore, error) {
 		return nil, err
 	}
 
-	err = ds.conn.ReadConfigFile(confPath)
+	if confPath == "" {
+		err = ds.conn.ReadDefaultConfigFile()
+	} else {
+		err = ds.conn.ReadConfigFile(confPath)
+	}
 	if err != nil {
 		return nil, err
 	}
