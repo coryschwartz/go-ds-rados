@@ -5,11 +5,11 @@ package rados
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/ceph/go-ceph/rados"
 	datastore "github.com/ipfs/go-datastore"
@@ -17,7 +17,6 @@ import (
 )
 
 type Datastore struct {
-	mu       sync.Mutex
 	conn     *rados.Conn
 	confPath string
 	pool     string
@@ -51,21 +50,17 @@ func (ds *Datastore) Shutdown() {
 	ds.conn.Shutdown()
 }
 
-func (ds *Datastore) Put(key datastore.Key, value []byte) error {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
+func (ds *Datastore) Put(_ context.Context, key datastore.Key, value []byte) error {
 	ioctx, err := ds.conn.OpenIOContext(ds.pool)
 	if err != nil {
 		return err
 	}
 	defer ioctx.Destroy()
-	err = ioctx.Write(key.String(), value, 0)
+	err = ioctx.WriteFull(key.String(), value)
 	return err
 }
 
-func (ds *Datastore) Get(key datastore.Key) (value []byte, err error) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
+func (ds *Datastore) Get(_ context.Context, key datastore.Key) (value []byte, err error) {
 	var ioctx *rados.IOContext
 	ioctx, err = ds.conn.OpenIOContext(ds.pool)
 	if err != nil {
@@ -96,9 +91,7 @@ func (ds *Datastore) Get(key datastore.Key) (value []byte, err error) {
 	return
 }
 
-func (ds *Datastore) Delete(key datastore.Key) error {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
+func (ds *Datastore) Delete(_ context.Context, key datastore.Key) error {
 	ioctx, err := ds.conn.OpenIOContext(ds.pool)
 	if err != nil {
 		return err
@@ -108,9 +101,7 @@ func (ds *Datastore) Delete(key datastore.Key) error {
 	return err
 }
 
-func (ds *Datastore) Query(q dsq.Query) (dsq.Results, error) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
+func (ds *Datastore) Query(ctx context.Context, q dsq.Query) (dsq.Results, error) {
 	ioctx, err := ds.conn.OpenIOContext(ds.pool)
 	if err != nil {
 		return nil, err
@@ -133,7 +124,7 @@ func (ds *Datastore) Query(q dsq.Query) (dsq.Results, error) {
 			if q.KeysOnly {
 				reschan <- dsq.Result{Entry: dsq.Entry{Key: iter.Value()}}
 			} else {
-				v, err := ds.Get(datastore.NewKey(iter.Value()))
+				v, err := ds.Get(ctx, datastore.NewKey(iter.Value()))
 				if err != nil {
 					err = fmt.Errorf("Failed to fetch value for key '%s': %w", iter.Value(), err)
 					return
@@ -157,9 +148,7 @@ func (ds *Datastore) Query(q dsq.Query) (dsq.Results, error) {
 	return qr, nil
 }
 
-func (ds *Datastore) Has(key datastore.Key) (exists bool, err error) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
+func (ds *Datastore) Has(_ context.Context, key datastore.Key) (exists bool, err error) {
 	ioctx, err := ds.conn.OpenIOContext(ds.pool)
 	if err != nil {
 		return
@@ -178,9 +167,7 @@ func (ds *Datastore) Has(key datastore.Key) (exists bool, err error) {
 	return
 }
 
-func (ds *Datastore) GetSize(key datastore.Key) (size int, err error) {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
+func (ds *Datastore) GetSize(_ context.Context, key datastore.Key) (size int, err error) {
 	ioctx, err := ds.conn.OpenIOContext(ds.pool)
 	if err != nil {
 		size = -1
@@ -203,11 +190,11 @@ func (ds *Datastore) GetSize(key datastore.Key) (size int, err error) {
 
 }
 
-func (ds *Datastore) Sync(prefix datastore.Key) (err error) {
+func (ds *Datastore) Sync(_ context.Context, prefix datastore.Key) (err error) {
 	return nil
 }
 
-func (ds *Datastore) Batch() (datastore.Batch, error) {
+func (ds *Datastore) Batch(_ context.Context) (datastore.Batch, error) {
 	return datastore.NewBasicBatch(ds), nil
 }
 

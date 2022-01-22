@@ -3,8 +3,8 @@ module github.com/coryschwartz/go-ds-rados
 go 1.17
 
 require (
-	github.com/ceph/go-ceph v0.11.0
-	github.com/ipfs/go-datastore v0.4.6
+	github.com/ceph/go-ceph v0.13.0
+	github.com/ipfs/go-datastore v0.5.1
 )
 
 require (
